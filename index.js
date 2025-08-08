@@ -1,80 +1,87 @@
-// Import necessary modules
-const express = require('express'); // Web framework for Node.js
-const bodyParser = require('body-parser'); // Middleware to parse incoming request bodies
-const axios = require('axios'); // Promise-based HTTP client for the browser and node.js
-require('dotenv').config(); // Loads environment variables from a .env file
 
-// Initialize the Express application
+require('dotenv').config();
+const express = require('express');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const axios = require('axios');
+const morgan = require('morgan');
+const cors = require('cors');
 const app = express();
-// Define the port for the server to listen on, defaulting to 3000
 const port = process.env.PORT || 3000;
-// Retrieve the OpenAI API key from environment variables
-const apiKey = process.env.OPENAI_API_KEY;
 
-// Use body-parser middleware to parse JSON request bodies
-app.use(bodyParser.json());
+// Middleware de seguridad
+app.use(helmet());
+app.use(cors());
+app.use(morgan('combined'));
+app.use(express.json());
 
-// Define a POST route for Alexa requests
+// Límite de peticiones
+const limiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minuto
+  max: 10,
+  message: 'Demasiadas solicitudes desde esta IP, por favor intente de nuevo más tarde.'
+});
+app.use(limiter);
+
+// Ruta de prueba
+app.get('/', (req, res) => {
+  res.send('Alexa ChatGPT Backend funcionando');
+});
+
+// Ruta para recibir solicitudes desde Alexa
 app.post('/alexa', async (req, res) => {
-  // Extract the intent from the Alexa request body
-  const intent = req.body.request.intent;
-  // Get the message from the 'mensaje' slot, or use a default message
-  const mensaje = intent?.slots?.mensaje?.value || 'Hola, ¿cómo estás?';
-
   try {
-    // Make a POST request to the OpenAI API for chat completions
-    const completion = await axios.post(
-      'https://api.openai.com/v1/chat/completions',
-      {
-        // Specify the GPT model to use
-        model: 'gpt-4',
-        // Define the messages for the conversation
-        messages: [
-          { role: 'system', content: 'Responde en español de forma clara y útil.' }, // System message for context
-          { role: 'user', content: mensaje } // User's message from Alexa
-        ]
-      },
-      {
-        // Set authorization header with the API key
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json' // Specify content type as JSON
+    const mensaje = req.body?.request?.intent?.slots?.mensaje?.value;
+    if (!mensaje) {
+      return res.json({
+        version: "1.0",
+        response: {
+          shouldEndSession: true,
+          outputSpeech: {
+            type: "PlainText",
+            text: "No entendí tu mensaje. ¿Puedes repetirlo?"
+          }
         }
+      });
+    }
+
+    const respuesta = await axios.post('https://api.openai.com/v1/chat/completions', {
+      model: "gpt-3.5-turbo",
+      messages: [{ role: "user", content: mensaje }]
+    }, {
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
       }
-    );
+    });
 
-    // Extract the response message from the OpenAI completion
-    const respuesta = completion.data.choices[0].message.content;
+    const texto = respuesta.data.choices[0].message.content;
 
-    // Send the response back to Alexa in the required format
     res.json({
-      version: '1.0',
+      version: "1.0",
       response: {
-        shouldEndSession: true, // Indicate that the session should end
+        shouldEndSession: true,
         outputSpeech: {
-          type: 'PlainText', // Specify speech type as plain text
-          text: respuesta // The text response for Alexa to speak
+          type: "PlainText",
+          text: texto
         }
       }
     });
   } catch (error) {
-    // Log any errors that occur during the API call
-    console.error(error);
-    // Send an error response back to Alexa
-    res.json({
-      version: '1.0',
+    console.error('Error al responder a Alexa:', error.message);
+    res.status(500).json({
+      version: "1.0",
       response: {
         shouldEndSession: true,
         outputSpeech: {
-          type: 'PlainText',
-          text: 'Ocurrió un error al contactar con ChatGPT.' // Error message for the user
+          type: "PlainText",
+          text: "Lo siento, hubo un problema al procesar tu solicitud."
         }
       }
     });
   }
 });
 
-// Start the server and listen on the defined port
 app.listen(port, () => {
-  console.log(`Alexa ChatGPT backend escuchando en el puerto ${port}`);
+  console.log(`Servidor escuchando en http://localhost:${port}`);
 });
