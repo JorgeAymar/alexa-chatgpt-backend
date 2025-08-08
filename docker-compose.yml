@@ -3,8 +3,16 @@ version: '3.8'
 services:
   alexa-chatgpt:
     build: .
+    container_name: alexa-chatgpt-backend
     ports:
       - "3000:3000"
     env_file:
       - .env
-    restart: always
+    volumes:
+      - ./logs:/usr/src/app/logs  # Mapea logs fuera del contenedor
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
